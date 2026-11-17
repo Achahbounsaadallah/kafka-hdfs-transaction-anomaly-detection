@@ -9,6 +9,7 @@ services:
     image: apache/kafka:latest
     container_name: kafka
     hostname: kafka
+
     ports:
       - "9092:9092"
       - "9093:9093"
@@ -38,11 +39,15 @@ services:
 
 
   # =================================
-  # HADOOP NAMENODE
+  # HADOOP NAMENODE (CUSTOM + PYTHON)
   # =================================
 
   namenode:
-    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    build:
+      context: ./docker/namenode
+
+    image: custom-hadoop-namenode:3.2.1-python3
+
     container_name: namenode
     hostname: namenode
 
@@ -52,8 +57,9 @@ services:
 
     environment:
       CLUSTER_NAME: hadoop-cluster
-      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
-      HDFS_CONF_dfs_replication: 1
+
+    env_file:
+      - hadoop.env
 
     volumes:
       - namenode_data:/hadoop/dfs/name
@@ -70,6 +76,7 @@ services:
 
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+
     container_name: datanode
     hostname: datanode
 
@@ -78,14 +85,77 @@ services:
 
     environment:
       SERVICE_PRECONDITION: "namenode:9870"
-      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
-      HDFS_CONF_dfs_replication: 1
+
+    env_file:
+      - hadoop.env
 
     volumes:
       - datanode_data:/hadoop/dfs/data
 
     depends_on:
       - namenode
+
+    networks:
+      - bigdata-network
+
+    restart: unless-stopped
+
+
+  # =================================
+  # HADOOP RESOURCE MANAGER
+  # =================================
+
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+
+    container_name: resourcemanager
+    hostname: resourcemanager
+
+    ports:
+      - "8088:8088"
+
+    env_file:
+      - hadoop.env
+
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870 datanode:9864"
+
+    depends_on:
+      - namenode
+      - datanode
+
+    networks:
+      - bigdata-network
+
+    restart: unless-stopped
+
+
+  # =================================
+  # HADOOP NODE MANAGER (CUSTOM + PYTHON)
+  # =================================
+
+  nodemanager:
+    build:
+      context: ./docker/nodemanager
+
+    image: custom-hadoop-nodemanager:3.2.1-python3
+
+    container_name: nodemanager
+    hostname: nodemanager
+
+    ports:
+      - "8042:8042"
+
+    env_file:
+      - hadoop.env
+
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870 resourcemanager:8088"
+
+    depends_on:
+      - namenode
+      - datanode
+      - resourcemanager
 
     networks:
       - bigdata-network

@@ -1,104 +1,97 @@
 
-# ==========================================
-# PYTHON
-# ==========================================
-
-# Environnements virtuels
-.venv/
-venv/
-env/
-
-# Cache Python
+# ===================================
+# Python
+# ===================================
 __pycache__/
 *.py[cod]
-*$py.class
-
-# Fichiers de configuration locaux
-.env
-.env.*
-!.env.example
-
-# Logs
-*.log
-logs/
-
-# Tests et couverture
+*.pyo
+*.pyd
+*.so
 .pytest_cache/
-.coverage
-htmlcov/
+.mypy_cache/
+.ruff_cache/
 
-# Jupyter
-.ipynb_checkpoints/
+# Environnements virtuels
+venv/
+.venv/
+env/
 
-# ==========================================
-# DONNEES ET FICHIERS BIG DATA
-# ==========================================
-
-# Données brutes et générées
-data/raw/*
-data/generated/*
-data/processed/*
-
-# Fichiers de transactions
-*.csv
-*.jsonl
-*.parquet
-*.avro
-
-# Conserver les dossiers vides
-!data/raw/.gitkeep
-!data/generated/.gitkeep
-!data/processed/.gitkeep
-
-# ==========================================
-# KAFKA
-# ==========================================
-
-# Logs et données persistantes Kafka
-kafka-logs/
-kafka-data/
-__consumer_offsets/
-
-# ==========================================
-# HADOOP / HDFS
-# ==========================================
-
-# Données persistantes HDFS
-hadoop-data/
-namenode/
-datanode/
-hdfs-data/
-
-# Fichiers temporaires
-tmp/
-temp/
-*.tmp
-
-# ==========================================
-# DOCKER
-# ==========================================
-
-# Secrets et configurations locales
-docker-compose.override.yml
-
-# ==========================================
-# WINDOWS
-# ==========================================
-
-Thumbs.db
-Desktop.ini
-$RECYCLE.BIN/
-
-# ==========================================
-# IDE
-# ==========================================
-
+# ===================================
+# IDEs
+# ===================================
 .vscode/
 .idea/
 *.iml
 
-# ==========================================
-# SYSTEME
-# ==========================================
+# ===================================
+# Secrets and environment variables
+# ===================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials/
 
+# ===================================
+# Logs
+# ===================================
+*.log
+logs/
+
+# ===================================
+# Temporary files
+# ===================================
+*.tmp
+*.temp
+*.swp
+*.bak
 .DS_Store
+Thumbs.db
+
+# ===================================
+# Generated transaction data
+# ===================================
+*.jsonl
+*.csv
+*.parquet
+
+# ===================================
+# Kafka
+# ===================================
+kafka-data/
+kafka-logs/
+
+# ===================================
+# Hadoop / HDFS local data
+# ===================================
+hadoop-data/
+namenode-data/
+datanode-data/
+hdfs-data/
+mapreduce-output/
+output/
+
+# ===================================
+# Temporary test data
+# ===================================
+test-output/
+tmp/
+temp/
+
+# ===================================
+# Docker
+# ===================================
+*.tar
+
+# ===================================
+# Generated reports
+# ===================================
+reports/generated/
+anomaly-reports/
+
+# ===================================
+# OS
+# ===================================
+$RECYCLE.BIN/
