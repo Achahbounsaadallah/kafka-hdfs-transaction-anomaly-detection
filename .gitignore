@@ -1,0 +1,104 @@
+
+# ==========================================
+# PYTHON
+# ==========================================
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Fichiers de configuration locaux
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Tests et couverture
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ==========================================
+# DONNEES ET FICHIERS BIG DATA
+# ==========================================
+
+# Données brutes et générées
+data/raw/*
+data/generated/*
+data/processed/*
+
+# Fichiers de transactions
+*.csv
+*.jsonl
+*.parquet
+*.avro
+
+# Conserver les dossiers vides
+!data/raw/.gitkeep
+!data/generated/.gitkeep
+!data/processed/.gitkeep
+
+# ==========================================
+# KAFKA
+# ==========================================
+
+# Logs et données persistantes Kafka
+kafka-logs/
+kafka-data/
+__consumer_offsets/
+
+# ==========================================
+# HADOOP / HDFS
+# ==========================================
+
+# Données persistantes HDFS
+hadoop-data/
+namenode/
+datanode/
+hdfs-data/
+
+# Fichiers temporaires
+tmp/
+temp/
+*.tmp
+
+# ==========================================
+# DOCKER
+# ==========================================
+
+# Secrets et configurations locales
+docker-compose.override.yml
+
+# ==========================================
+# WINDOWS
+# ==========================================
+
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ==========================================
+# IDE
+# ==========================================
+
+.vscode/
+.idea/
+*.iml
+
+# ==========================================
+# SYSTEME
+# ==========================================
+
+.DS_Store
