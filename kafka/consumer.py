@@ -13,37 +13,50 @@ from kafka.structs import OffsetAndMetadata
 # 1. CONFIGURATION
 # ==========================================
 
-KAFKA_SERVER = "localhost:9092"
+KAFKA_SERVER = os.getenv(
+    "KAFKA_SERVER",
+    "kafka:9092"
+)
+
 TOPIC_NAME = "transactions"
-GROUP_ID = "transactions-hdfs-group"
+
+GROUP_ID = os.getenv(
+    "GROUP_ID",
+    "transactions-hdfs-group"
+)
+
+EXPECTED_TRANSACTIONS = int(
+    os.getenv("EXPECTED_TRANSACTIONS", "10000")
+)
 
 BATCH_SIZE = 500
-BATCH_TIMEOUT = 10  # secondes
+
+BATCH_TIMEOUT = 10
+
+CONSUMER_IDLE_TIMEOUT = 60
 
 HDFS_CONTAINER = "namenode"
-HDFS_DIRECTORY = "/data/transactions"
+
+HDFS_DIRECTORY = os.getenv(
+    "HDFS_DIRECTORY",
+    "/data/transactions"
+)
 
 
 # ==========================================
-# 2. CONNEXION A KAFKA
+# 2. CONNEXION KAFKA
 # ==========================================
 
 consumer = KafkaConsumer(
-    TOPIC_NAME,
 
     bootstrap_servers=KAFKA_SERVER,
 
     group_id=GROUP_ID,
 
-    # Lire depuis le début si aucun offset
-    # n'a encore été enregistré pour ce groupe.
-    auto_offset_reset="earliest",
+    auto_offset_reset="latest",
 
-    # Nous validons les offsets manuellement
-    # après l'archivage réussi dans HDFS.
     enable_auto_commit=False,
 
-    # Transformer automatiquement le JSON en dictionnaire Python.
     value_deserializer=lambda value: json.loads(
         value.decode("utf-8")
     )
@@ -51,11 +64,10 @@ consumer = KafkaConsumer(
 
 
 # ==========================================
-# 3. FONCTION POUR EXECUTER DOCKER
+# 3. EXECUTION DES COMMANDES DOCKER
 # ==========================================
 
 def run_command(command):
-    """Execute une commande et signale toute erreur."""
 
     result = subprocess.run(
         command,
@@ -68,28 +80,64 @@ def run_command(command):
 
 
 # ==========================================
-# 4. PREPARER LE REPERTOIRE HDFS
+# 4. PREPARATION HDFS
 # ==========================================
 
 run_command([
     "docker", "exec", HDFS_CONTAINER,
-    "hdfs", "dfs", "-mkdir", "-p", HDFS_DIRECTORY
+    "hdfs", "dfs", "-mkdir", "-p",
+    HDFS_DIRECTORY
 ])
 
-print("Connexion Kafka reussie.")
 print("Repertoire HDFS pret :", HDFS_DIRECTORY)
 
 
 # ==========================================
-# 5. VARIABLES DU BATCH
+# 5. PREPARATION DU CONSUMER
+# ==========================================
+
+consumer.subscribe([TOPIC_NAME])
+
+print("Attente de l'affectation des partitions Kafka...")
+
+assignment_deadline = time.monotonic() + 60
+
+while not consumer.assignment():
+
+    consumer.poll(timeout_ms=1000)
+
+    if time.monotonic() >= assignment_deadline:
+        raise TimeoutError(
+            "Impossible d'obtenir les partitions Kafka."
+        )
+
+# Positionner le Consumer apres les anciens messages.
+consumer.seek_to_end()
+
+# Lire la position finale de chaque partition.
+positions = consumer.position
+
+print("Partitions affectees :", consumer.assignment())
+print("Positions initiales :", positions)
+
+print("CONSUMER_READY")
+
+
+# ==========================================
+# 6. VARIABLES DU BATCH
 # ==========================================
 
 batch = []
+
 batch_start_time = None
+
+received_count = 0
+
+last_message_time = time.monotonic()
 
 
 # ==========================================
-# 6. ARCHIVAGE D'UN BATCH DANS HDFS
+# 7. ARCHIVAGE D'UN BATCH DANS HDFS
 # ==========================================
 
 def archive_batch(records):
@@ -97,38 +145,44 @@ def archive_batch(records):
     if not records:
         return
 
-    # Calculer les plages d'offsets par partition.
     offsets_by_partition = {}
 
     for record in records:
+
         partition = record["partition"]
+
         offset = record["offset"]
 
         offsets_by_partition.setdefault(
             partition, []
         ).append(offset)
 
-    # Construire un nom déterministe à partir des offsets.
-    # Cela permet de réutiliser le même fichier si le lot
-    # est rejoué après un échec de validation Kafka.
+    # Creer un nom unique a partir des offsets.
     filename_parts = []
 
     for partition in sorted(offsets_by_partition):
+
         offsets = offsets_by_partition[partition]
 
         filename_parts.append(
-            f"p{partition}_{min(offsets)}-{max(offsets)}"
+            "p{}_{}-{}".format(
+                partition,
+                min(offsets),
+                max(offsets)
+            )
         )
 
-    filename = "transactions_" + "_".join(filename_parts) + ".jsonl"
-
-    # --------------------------------------
-    # A. CREATION DU FICHIER JSONL LOCAL
-    # --------------------------------------
+    filename = (
+        "transactions_"
+        + "_".join(filename_parts)
+        + ".jsonl"
+    )
 
     temp_file_path = None
 
     try:
+
+        # A. Creer un fichier JSONL local.
 
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -142,7 +196,6 @@ def archive_batch(records):
 
             for record in records:
 
-                # Une transaction JSON par ligne.
                 json_line = json.dumps(
                     record["value"],
                     ensure_ascii=False
@@ -150,39 +203,35 @@ def archive_batch(records):
 
                 temp_file.write(json_line + "\n")
 
-        print(
-            f"\nFichier temporaire cree : {temp_file_path}"
-        )
-
-        # --------------------------------------
-        # B. COPIE VERS LE CONTENEUR NAMENODE
-        # --------------------------------------
+        # B. Copier dans le conteneur NameNode.
 
         run_command([
             "docker", "cp",
             temp_file_path,
-            f"{HDFS_CONTAINER}:/tmp/{filename}"
+            "{}/tmp/{}".format(
+                HDFS_CONTAINER,
+                filename
+            )
         ])
 
-        print("Fichier copie dans le conteneur NameNode.")
-
-        # --------------------------------------
-        # C. ARCHIVAGE DANS HDFS
-        # --------------------------------------
+        # C. Enregistrer dans HDFS.
 
         run_command([
             "docker", "exec", HDFS_CONTAINER,
             "hdfs", "dfs",
             "-put", "-f",
-            f"/tmp/{filename}",
-            f"{HDFS_DIRECTORY}/{filename}"
+            "/tmp/{}".format(filename),
+            "{}/{}".format(HDFS_DIRECTORY, filename)
         ])
 
-        print("Batch archive avec succes dans HDFS.")
+        print(
+            "Batch archive dans HDFS : {} ({} transactions)".format(
+                filename,
+                len(records)
+            )
+        )
 
-        # --------------------------------------
-        # D. VALIDATION DES OFFSETS KAFKA
-        # --------------------------------------
+        # D. Valider les offsets apres l'archivage.
 
         offsets_to_commit = {}
 
@@ -193,124 +242,160 @@ def archive_batch(records):
                 partition
             )
 
-            # Kafka attend le prochain offset à lire.
             next_offset = max(offsets) + 1
 
             offsets_to_commit[topic_partition] = (
                 OffsetAndMetadata(next_offset, "")
             )
 
-        consumer.commit(offsets=offsets_to_commit)
+        consumer.commit(
+            offsets=offsets_to_commit
+        )
 
-        print("Offsets Kafka valides avec succes.")
+        print("Offsets Kafka valides.")
 
-        # --------------------------------------
-        # E. NETTOYAGE DU FICHIER TEMPORAIRE
-        # --------------------------------------
+        # E. Nettoyage de la copie temporaire dans le NameNode.
 
         try:
+
             run_command([
                 "docker", "exec", HDFS_CONTAINER,
                 "hdfs", "dfs", "-rm", "-f",
-                f"/tmp/{filename}"
+                "/tmp/{}".format(filename)
             ])
-        except subprocess.CalledProcessError:
-            print("Attention : impossible de supprimer la copie temporaire HDFS.")
 
-        print(
-            f"Nombre de transactions archivees : {len(records)}"
-        )
+        except subprocess.CalledProcessError:
+
+            print("Attention : nettoyage temporaire impossible.")
 
     finally:
 
-        # Supprimer le fichier temporaire Windows.
         if temp_file_path and os.path.exists(temp_file_path):
+
             os.remove(temp_file_path)
 
 
 # ==========================================
-# 7. BOUCLE PRINCIPALE DU CONSUMER
+# 8. CONSOMMATION DES TRANSACTIONS
 # ==========================================
 
-print("\nConsumer en attente de transactions...\n")
+print("Consumer en attente des nouvelles transactions...")
 
 try:
 
-    while True:
+    while received_count < EXPECTED_TRANSACTIONS:
 
-        # Recuperer les messages disponibles.
-        remaining = BATCH_SIZE - len(batch)
+        remaining = EXPECTED_TRANSACTIONS - received_count
+
+        available_in_batch = BATCH_SIZE - len(batch)
+
+        max_records = max(
+            1,
+            min(available_in_batch, remaining)
+        )
 
         messages = consumer.poll(
             timeout_ms=1000,
-            max_records=max(1, remaining)
+            max_records=max_records
         )
 
-        # Ajouter les messages au batch.
         for topic_partition, records in messages.items():
 
             for message in records:
 
+                if received_count >= EXPECTED_TRANSACTIONS:
+                    break
+
                 batch.append({
+
                     "value": message.value,
+
                     "partition": message.partition,
+
                     "offset": message.offset
+
                 })
+
+                received_count += 1
+
+                last_message_time = time.monotonic()
 
                 if batch_start_time is None:
                     batch_start_time = time.monotonic()
 
-                print(
-                    f"Transaction recue : "
-                    f"{message.value.get('transaction_id')} "
-                    f"| Partition : {message.partition} "
-                    f"| Offset : {message.offset}"
-                )
+                if received_count % 100 == 0:
 
-        # Calculer le temps ecoule depuis le premier message.
+                    print(
+                        "Transactions recues : {}/{}".format(
+                            received_count,
+                            EXPECTED_TRANSACTIONS
+                        )
+                    )
+
+        # Verifier le timeout d'inactivite.
+
+        if time.monotonic() - last_message_time > CONSUMER_IDLE_TIMEOUT:
+
+            raise TimeoutError(
+                "Aucune nouvelle transaction recue depuis {} secondes."
+                .format(CONSUMER_IDLE_TIMEOUT)
+            )
+
         elapsed_time = (
+
             time.monotonic() - batch_start_time
+
             if batch_start_time is not None
+
             else 0
+
         )
 
-        # Condition 1 : 500 transactions.
         batch_is_full = len(batch) >= BATCH_SIZE
 
-        # Condition 2 : 10 secondes ecoulees.
         timeout_reached = (
+
             batch_start_time is not None
+
             and elapsed_time >= BATCH_TIMEOUT
+
         )
 
         if batch and (batch_is_full or timeout_reached):
 
-            print("\n================================")
-            print("DEBUT DE L'ARCHIVAGE DU BATCH")
-            print("================================")
+            print("Debut archivage batch...")
 
             archive_batch(batch)
 
-            # Vider le batch uniquement après archivage
-            # et validation réussis.
             batch.clear()
+
             batch_start_time = None
 
-            print("\nConsumer en attente du prochain batch...\n")
+    # ======================================
+    # 9. ARCHIVAGE DU DERNIER BATCH
+    # ======================================
 
-
-except KeyboardInterrupt:
-
-    print("\nArret demande par l'utilisateur.")
-
-    # Archiver les messages restants avant de quitter.
     if batch:
-        print("Archivage du dernier batch...")
+
+        print("Archivage du dernier batch incomplet...")
+
         archive_batch(batch)
+
         batch.clear()
 
+    print("===================================")
+    print("CONSOMMATION TERMINEE")
+    print("Transactions recues :", received_count)
+    print("===================================")
+
+except Exception as error:
+
+    print("ERREUR CONSUMER :", str(error))
+
+    raise
 
 finally:
 
     consumer.close()
+
     print("Consumer ferme.")

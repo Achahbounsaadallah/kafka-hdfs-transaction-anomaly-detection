@@ -1,5 +1,6 @@
 
 import json
+import os
 import time
 import pandas as pd
 
@@ -11,17 +12,29 @@ from kafka.errors import KafkaError
 # 1. CONFIGURATION
 # ==========================================
 
-KAFKA_SERVER = "localhost:9092"
+KAFKA_SERVER = os.getenv(
+    "KAFKA_SERVER",
+    "kafka:9092"
+)
+
 TOPIC_NAME = "transactions"
 
-CSV_PATH = "data/raw/transactions.csv"
+CSV_PATH = os.getenv(
+    "CSV_PATH",
+    "/opt/airflow/project/data/raw/transactions.csv"
+)
 
-# Delai entre deux transactions
-SEND_INTERVAL = 0.1
+MAX_TRANSACTIONS = int(
+    os.getenv("MAX_TRANSACTIONS", "10000")
+)
+
+SEND_INTERVAL = float(
+    os.getenv("SEND_INTERVAL", "0.1")
+)
 
 
 # ==========================================
-# 2. CONNEXION AU BROKER KAFKA
+# 2. CONNEXION KAFKA
 # ==========================================
 
 producer = KafkaProducer(
@@ -47,97 +60,104 @@ producer = KafkaProducer(
 # 3. LECTURE DU CSV
 # ==========================================
 
-df = pd.read_csv(CSV_PATH)
-
-print("===================================")
-print("KAFKA PRODUCER DEMARRE")
-print("===================================")
-
-print(f"Nombre total de transactions : {len(df)}")
-
-
-# ==========================================
-# 4. EXCLURE LES ETIQUETTES
-# ==========================================
-
-label_columns = [
-    "is_anomaly",
-    "anomaly_type"
-]
-
-df = df.drop(
-    columns=label_columns,
-    errors="ignore"
-)
-
-print("\nColonnes envoyees :")
-
-print(df.columns.tolist())
-
-
-# ==========================================
-# 5. ENVOI DES TRANSACTIONS
-# ==========================================
-
-sent_count = 0
-
 try:
+
+    df = pd.read_csv(CSV_PATH)
+
+    if MAX_TRANSACTIONS <= 0:
+        raise ValueError("MAX_TRANSACTIONS doit etre positif.")
+
+    if len(df) < MAX_TRANSACTIONS:
+        raise ValueError(
+            "Le CSV contient seulement {} transactions, "
+            "mais {} sont demandees.".format(
+                len(df), MAX_TRANSACTIONS
+            )
+        )
+
+    df = df.head(MAX_TRANSACTIONS)
+
+    # Exclure les colonnes d'etiquetage.
+    label_columns = [
+        "is_anomaly",
+        "anomaly_type"
+    ]
+
+    df = df.drop(
+        columns=label_columns,
+        errors="ignore"
+    )
+
+    print("===================================")
+    print("KAFKA PRODUCER DEMARRE")
+    print("===================================")
+
+    print("Transactions a envoyer :", len(df))
+
+    print("Colonnes envoyees :")
+    print(df.columns.tolist())
+
+
+    # ==========================================
+    # 4. ENVOI DES TRANSACTIONS
+    # ==========================================
+
+    sent_count = 0
 
     for _, row in df.iterrows():
 
-        # Transformer la ligne en dictionnaire
-        transaction = row.to_dict()
+        transaction = {}
 
-        # Utiliser transaction_id comme cle Kafka
+        for column, value in row.items():
+
+            if pd.isna(value):
+                value = None
+
+            elif hasattr(value, "item"):
+                value = value.item()
+
+            transaction[column] = value
+
         transaction_key = str(
             transaction["transaction_id"]
         )
 
-        # Envoyer la transaction dans Kafka
         future = producer.send(
             TOPIC_NAME,
             key=transaction_key,
             value=transaction
         )
 
-        # Attendre la confirmation du broker
         metadata = future.get(timeout=30)
 
         sent_count += 1
 
-        print(
-            f"[{sent_count}/{len(df)}] "
-            f"Transaction envoyee : "
-            f"{transaction_key} | "
-            f"Partition : {metadata.partition} | "
-            f"Offset : {metadata.offset}"
-        )
+        if sent_count % 100 == 0 or sent_count == len(df):
 
-        # Simuler un flux de transactions
+            print(
+                "[{}/{}] Transaction envoyee | "
+                "Partition={} | Offset={}".format(
+                    sent_count,
+                    len(df),
+                    metadata.partition,
+                    metadata.offset
+                )
+            )
+
         time.sleep(SEND_INTERVAL)
 
-
-    # Attendre l'envoi de tous les messages restants
     producer.flush()
 
-    print("\n===================================")
-    print("ENVOI TERMINE")
     print("===================================")
-
-    print(f"Transactions envoyees : {sent_count}")
-
-
-except KeyboardInterrupt:
-
-    print("\nArret demande par l'utilisateur.")
-
-except KafkaError as error:
-
-    print(f"Erreur Kafka : {error}")
+    print("ENVOI TERMINE")
+    print("Transactions envoyees :", sent_count)
+    print("===================================")
 
 except Exception as error:
 
-    print(f"Erreur : {error}")
+    print("ERREUR PRODUCER :", str(error))
+
+    raise
 
 finally:
 

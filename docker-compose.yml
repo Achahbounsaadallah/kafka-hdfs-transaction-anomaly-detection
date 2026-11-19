@@ -11,18 +11,21 @@ services:
     hostname: kafka
 
     ports:
-      - "9092:9092"
-      - "9093:9093"
+      - "29092:29092"
 
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
 
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093
+
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
 
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
 
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -37,9 +40,11 @@ services:
     networks:
       - bigdata-network
 
+    restart: unless-stopped
+
 
   # =================================
-  # HADOOP NAMENODE (CUSTOM + PYTHON)
+  # HADOOP NAMENODE
   # =================================
 
   namenode:
@@ -131,7 +136,7 @@ services:
 
 
   # =================================
-  # HADOOP NODE MANAGER (CUSTOM + PYTHON)
+  # HADOOP NODE MANAGER
   # =================================
 
   nodemanager:
@@ -156,6 +161,57 @@ services:
       - namenode
       - datanode
       - resourcemanager
+
+    networks:
+      - bigdata-network
+
+    restart: unless-stopped
+
+
+  # =================================
+  # AIRFLOW
+  # =================================
+
+  airflow:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+
+    image: custom-airflow-kafka-hadoop:1.0
+
+    container_name: airflow
+    hostname: airflow
+
+    command: standalone
+
+    ports:
+      - "8080:8080"
+
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+
+      AIRFLOW__CORE__FERNET_KEY: ""
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+
+
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./:/opt/airflow/project
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    group_add:
+      - "0"
+
+    depends_on:
+      - kafka
+      - namenode
+      - datanode
+      - resourcemanager
+      - nodemanager
 
     networks:
       - bigdata-network
